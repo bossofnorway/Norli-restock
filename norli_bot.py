@@ -1,26 +1,29 @@
 import asyncio
 import json
+import os
 from datetime import datetime
 
 import httpx
 from playwright.async_api import async_playwright
 
-DISCORD_WEBHOOK = "SETT_INN_WEBHOOK_HER"
-CHECK_INTERVAL = 45          # sekunder mellom hver sjekk
-HEARTBEAT_INTERVAL = 3600    # send "bot lever"-ping til Discord hver time
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "SETT_INN_WEBHOOK_HER")
+CHECK_INTERVAL = 45
+HEARTBEAT_INTERVAL = 3600
 
 PRODUCT_URLS = [
     "https://www.norli.no/leker/kreative-leker/samlekort/pokemonkort/pokemon-booster-bundle-me02-5-0196214131613",
     "https://www.norli.no/leker/kreative-leker/samlekort/pokemonkort/pokemon-ex-box-2-me02-5-0196214131972",
     "https://www.norli.no/leker/kreative-leker/samlekort/pokemonkort/pokemon-prem-poster-coll-me02-5-2-0196214131033",
     "https://www.norli.no/leker/kreative-leker/samlekort/pokemonkort/pokemon-deluxe-pin-coll-me02-5-0196214131026",
-    "https://www.norli.no/leker/kreative-leker/samlekort/pokemonkort/pokemon-mini-tin-me02-5-5-0196214132658"
+    "https://www.norli.no/leker/kreative-leker/samlekort/pokemonkort/pokemon-mini-tin-me02-5-5-0196214132658",
 ]
+
 SELECTED_STORES = [
     "Bergen Storsenter",
     "Bergen Xhibition",
-    "Bergen Lagunen"
+    "Bergen Lagunen",
 ]
+
 STATE_FILE = "norli_state.json"
 
 
@@ -50,14 +53,16 @@ async def send_startup():
     await discord_post({
         "embeds": [{
             "title": "🟢 Norli restock-bot er oppe",
-            "description": f"Overvåker **{len(PRODUCT_URLS)} produkter** for butikkene:\n" +
-                           "\n".join(f"- {s}" for s in SELECTED_STORES),
-            "color": 0x6daa45,
+            "description": (
+                f"Overvåker **{len(PRODUCT_URLS)} produkter** for butikkene:\n"
+                + "\n".join(f"- {s}" for s in SELECTED_STORES)
+            ),
+            "color": 0x6DAA45,
             "fields": [
                 {"name": "Sjekkintervall", "value": f"{CHECK_INTERVAL}s", "inline": True},
                 {"name": "Heartbeat", "value": f"Hver {HEARTBEAT_INTERVAL // 60} min", "inline": True},
             ],
-            "footer": {"text": f"Startet {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}
+            "footer": {"text": f"Startet {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"},
         }]
     })
 
@@ -72,31 +77,41 @@ async def send_heartbeat(checks: int, restocks: int):
                 {"name": "Restock-varsler sendt", "value": str(restocks), "inline": True},
                 {"name": "Tid", "value": datetime.now().strftime("%H:%M:%S"), "inline": True},
             ],
-            "footer": {"text": f"Neste heartbeat om {HEARTBEAT_INTERVAL // 60} min"}
+            "footer": {"text": f"Neste heartbeat om {HEARTBEAT_INTERVAL // 60} min"},
         }]
     })
 
 
-async def send_restock(product: dict, stores: list[str]):
-    store_text = "\n".join(f"- {store}" for store in stores) if stores else "Fant ikke butikknavn, men produktet ser tilgjengelig ut"
+async def send_restock(product: dict, stores: list):
+    store_text = (
+        "\n".join(f"- {s}" for s in stores)
+        if stores
+        else "Fant ikke butikknavn, men produktet ser tilgjengelig ut"
+    )
     embed = {
         "title": f"🎴 RESTOCK: {product['title']}",
         "url": product["url"],
         "description": store_text,
         "color": 0xFFCC00,
         "fields": [
-            {"name": "Valgte butikker", "value": ", ".join(SELECTED_STORES) or "Ingen filter", "inline": False},
-            {"name": "Tid", "value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "inline": True}
-        ]
+            {"name": "Tid", "value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "inline": True},
+        ],
     }
     if product.get("image"):
         embed["thumbnail"] = {"url": product["image"]}
     await discord_post({"content": "@here", "embeds": [embed]})
 
 
-async def extract_store_hits(page) -> list[str]:
+async def extract_store_hits(page) -> list:
     texts = []
-    selectors = ["body", "[class*='store']", "[class*='Store']", "[class*='pickup']", "[class*='Pickup']", "[class*='collect']"]
+    selectors = [
+        "body",
+        "[class*='store']",
+        "[class*='Store']",
+        "[class*='pickup']",
+        "[class*='Pickup']",
+        "[class*='collect']",
+    ]
     for selector in selectors:
         for node in await page.query_selector_all(selector):
             try:
@@ -109,9 +124,10 @@ async def extract_store_hits(page) -> list[str]:
     return sorted({store for store in SELECTED_STORES if normalize(store) in body_norm})
 
 
-async def inspect_product(page, url: str) -> dict | None:
+async def inspect_product(page, url: str):
     await page.goto(url, wait_until="domcontentloaded", timeout=45000)
     await page.wait_for_timeout(2000)
+
     title = await page.title()
     body_text = normalize(await page.locator("body").inner_text())
 
@@ -121,27 +137,31 @@ async def inspect_product(page, url: str) -> dict | None:
     image = ""
     meta = page.locator('meta[property="og:image"]')
     if await meta.count():
-        image = await meta.get_attribute('content') or ""
+        image = await meta.get_attribute("content") or ""
 
     store_hits = await extract_store_hits(page)
-    in_store_signal = any(signal in body_text for signal in [
-        "klikk og hent", "hent i butikk", "reserver i butikk", "tilgjengelig i butikk"
-    ])
+
+    in_store_signal = any(
+        signal in body_text
+        for signal in ["klikk og hent", "hent i butikk", "reserver i butikk", "tilgjengelig i butikk"]
+    )
 
     if SELECTED_STORES and not store_hits:
         return None
     if not in_store_signal and not store_hits:
         return None
 
-    return {"url": url, "title": title.replace(" - Norli Bokhandel", "").strip(), "image": image, "stores": store_hits}
+    return {
+        "url": url,
+        "title": title.replace(" - Norli Bokhandel", "").strip(),
+        "image": image,
+        "stores": store_hits,
+    }
 
 
 async def run_loop():
-    if DISCORD_WEBHOOK == "https://discord.com/api/webhooks/1498328877364416523/-bMdEIjBGTBmM82GPualbOgTk2DFUIZeX7xbFaheaFlL18M-Xi_yP9clK-utUb3P_5mI":
-        raise SystemExit("Sett inn Discord webhook før du starter boten.")
-
     await send_startup()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Bot startet. Overvåker {len(PRODUCT_URLS)} produkter.")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Bot startet. Overvåker {len(PRODUCT_URLS)} produkter.")
 
     state = load_state()
     checks = 0
@@ -150,7 +170,9 @@ async def run_loop():
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
         page = await context.new_page()
 
         while True:
@@ -165,10 +187,10 @@ async def run_loop():
                     if is_live and not was_live:
                         restocks += 1
                         await send_restock(product, product["stores"])
-                        print(f"  🎴 RESTOCK: {product['title']} – {product['stores']}")
+                        print(f"  RESTOCK: {product['title']} – {product['stores']}")
                     state[url] = is_live
                 except Exception as exc:
-                    print(f"  ❌ Feil på {url}: {exc}")
+                    print(f"  Feil på {url}: {exc}")
 
             save_state(state)
 
@@ -176,7 +198,7 @@ async def run_loop():
             if now - last_heartbeat >= HEARTBEAT_INTERVAL:
                 await send_heartbeat(checks, restocks)
                 last_heartbeat = now
-                print(f"  💓 Heartbeat sendt til Discord")
+                print("  Heartbeat sendt til Discord")
 
             await asyncio.sleep(CHECK_INTERVAL)
 
