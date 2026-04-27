@@ -137,7 +137,7 @@ async def inspect_product(page, url: str) -> dict | None:
 
 
 async def run_loop():
-    if DISCORD_WEBHOOK == "SETT_INN_WEBHOOK_HER":
+    if DISCORD_WEBHOOK == "https://discord.com/api/webhooks/1498328877364416523/-bMdEIjBGTBmM82GPualbOgTk2DFUIZeX7xbFaheaFlL18M-Xi_yP9clK-utUb3P_5mI":
         raise SystemExit("Sett inn Discord webhook før du starter boten.")
 
     await send_startup()
